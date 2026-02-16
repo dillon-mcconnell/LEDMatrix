@@ -255,11 +255,12 @@ class ScrollHelper:
         self.scroll_position += pixels_to_move
         self.total_distance_scrolled += pixels_to_move
         
-        # Calculate required total distance: total_scroll_width + display_width
-        # The image already includes display_width padding at the start, so we need
-        # to scroll total_scroll_width pixels to show all content, plus display_width
-        # more pixels to ensure the last content scrolls completely off the screen
-        required_total_distance = self.total_scroll_width + self.display_width
+        # Calculate required total distance.
+        # The composed image already includes leading display-width padding, so a
+        # complete cycle is exactly total_scroll_width pixels. Using an extra
+        # display width here causes one wrapped pass of the beginning before
+        # cycle completion, which appears as duplicate content at loop boundaries.
+        required_total_distance = self.total_scroll_width
         
         # Check completion FIRST (before wrap-around) to prevent visual loop
         # When dynamic duration is enabled and cycle is complete, stop at end instead of wrapping
@@ -560,11 +561,10 @@ class ScrollHelper:
             return self.min_duration
         
         try:
-            # Calculate total scroll distance needed
-            # The image already includes display_width padding at the start, so we need
-            # to scroll total_scroll_width pixels to show all content, plus display_width
-            # more pixels to ensure the last content scrolls completely off the screen
-            total_scroll_distance = self.total_scroll_width + self.display_width
+            # Calculate total scroll distance needed.
+            # The composed image already includes leading display-width padding,
+            # so one complete cycle is total_scroll_width pixels.
+            total_scroll_distance = self.total_scroll_width
             
             # Calculate effective pixels per second based on scrolling mode
             if self.frame_based_scrolling:
