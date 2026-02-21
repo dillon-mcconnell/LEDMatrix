@@ -634,11 +634,7 @@ class PluginManager:
         # Default: 60 seconds
         return 60.0
 
-    def run_scheduled_updates(
-        self,
-        current_time: Optional[float] = None,
-        allowed_plugin_ids: Optional[set[str]] = None
-    ) -> None:
+    def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
         """
         Trigger plugin updates based on their defined update intervals.
         Includes health tracking and circuit breaker logic.
@@ -648,9 +644,6 @@ class PluginManager:
             current_time = time.time()
 
         for plugin_id, plugin_instance in list(self.plugins.items()):
-            if allowed_plugin_ids is not None and plugin_id not in allowed_plugin_ids:
-                continue
-
             if not getattr(plugin_instance, "enabled", True):
                 continue
 

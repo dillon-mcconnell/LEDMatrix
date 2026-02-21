@@ -68,8 +68,7 @@ class VegasModeCoordinator:
         self.stream_manager = StreamManager(
             self.vegas_config,
             plugin_manager,
-            self.plugin_adapter,
-            plugin_filter_getter=self._get_plugin_filter
+            self.plugin_adapter
         )
         self.render_pipeline = RenderPipeline(
             self.vegas_config,
@@ -90,7 +89,6 @@ class VegasModeCoordinator:
         # Interrupt checker for yielding control back to display controller
         self._interrupt_check: Optional[Callable[[], bool]] = None
         self._interrupt_check_interval: int = 10  # Check every N frames
-        self._plugin_filter_check: Optional[Callable[[], Optional[set[str]]]] = None
 
         # Config update tracking
         self._config_version = 0
@@ -159,26 +157,6 @@ class VegasModeCoordinator:
         """
         self._interrupt_check = checker
         self._interrupt_check_interval = max(1, check_interval)
-
-    def set_plugin_filter_checker(self, checker: Callable[[], Optional[set[str]]]) -> None:
-        """
-        Set callback for filtering which plugins Vegas should include.
-
-        The callback should return:
-        - None: no filtering (all enabled plugins allowed)
-        - set[str]: allowed plugin IDs for current window
-        """
-        self._plugin_filter_check = checker
-
-    def _get_plugin_filter(self) -> Optional[set[str]]:
-        """Safely invoke plugin filter callback."""
-        if not self._plugin_filter_check:
-            return None
-        try:
-            return self._plugin_filter_check()
-        except Exception:
-            logger.exception("Vegas plugin filter callback failed")
-            return None
 
     def start(self) -> bool:
         """

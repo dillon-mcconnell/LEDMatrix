@@ -4,7 +4,7 @@ import sys
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
@@ -85,8 +85,6 @@ class DisplayController:
         
         # List of available display modes - now handled entirely by plugins
         self.available_modes = []
-        self._all_available_modes: List[str] = []
-        self._scheduled_plugin_ids: Optional[Set[str]] = None
         
         # Initialize Plugin System
         plugin_time = time.time()
@@ -310,7 +308,6 @@ class DisplayController:
             logger.info("Plugin system initialized in %.3f seconds", time.time() - plugin_time)
             logger.info("Total available modes: %d", len(self.available_modes))
             logger.info("Available modes: %s", self.available_modes)
-            self._all_available_modes = list(self.available_modes)
             
             # If on-demand mode was restored from cache, populate on_demand_modes now that plugins are loaded
             if self.on_demand_active and self.on_demand_plugin_id:
@@ -399,9 +396,6 @@ class DisplayController:
             self.vegas_coordinator.set_interrupt_checker(
                 self._check_vegas_interrupt,
                 check_interval=10  # Check every 10 frames (~80ms at 125 FPS)
-            )
-            self.vegas_coordinator.set_plugin_filter_checker(
-                self._get_plugin_schedule_filter
             )
 
             logger.info("Vegas mode coordinator initialized")
@@ -634,153 +628,6 @@ class DisplayController:
             logger.warning(f"Invalid dim schedule time format: {e}")
             return normal_brightness
 
-    def _get_local_now(self) -> datetime:
-        """Get timezone-aware local datetime based on configured timezone."""
-        timezone_str = self.config.get('timezone', 'UTC')
-        try:
-            tz = pytz.timezone(timezone_str)
-        except pytz.UnknownTimeZoneError:
-            logger.warning("Unknown timezone '%s', using UTC", timezone_str)
-            tz = pytz.UTC
-        return datetime.now(tz)
-
-    def _time_in_window(self, current_time, start_time, end_time) -> bool:
-        """Return True if current_time is within [start_time, end_time], including overnight ranges."""
-        if start_time <= end_time:
-            return start_time <= current_time <= end_time
-        return current_time >= start_time or current_time <= end_time
-
-    def _get_enabled_loaded_plugin_ids(self) -> Set[str]:
-        """Return IDs of currently loaded + enabled plugins."""
-        enabled_plugins: Set[str] = set()
-        if not self.plugin_manager or not hasattr(self.plugin_manager, 'plugins'):
-            return enabled_plugins
-
-        for plugin_id, plugin in self.plugin_manager.plugins.items():
-            if getattr(plugin, 'enabled', False):
-                enabled_plugins.add(plugin_id)
-        return enabled_plugins
-
-    def _get_plugin_schedule_filter(self) -> Optional[Set[str]]:
-        """
-        Resolve currently allowed plugin IDs from schedule.plugin_schedule.
-
-        Returns:
-            None when plugin scheduling is disabled (no filtering),
-            otherwise a set (possibly empty) of allowed plugin IDs.
-        """
-        if self.on_demand_active:
-            # On-demand mode should override plugin window scheduling.
-            return None
-
-        schedule_config = self.config.get('schedule', {}) or {}
-        plugin_schedule = schedule_config.get('plugin_schedule', {}) or {}
-        if not isinstance(plugin_schedule, dict) or not plugin_schedule.get('enabled', False):
-            return None
-
-        enabled_plugins = self._get_enabled_loaded_plugin_ids()
-        fallback = str(plugin_schedule.get('fallback', 'all_enabled')).strip().lower()
-        windows = plugin_schedule.get('windows', [])
-        if not isinstance(windows, list):
-            windows = []
-
-        if not windows:
-            return set() if fallback == 'none' else set(enabled_plugins)
-
-        now_local = self._get_local_now()
-        current_day = now_local.strftime('%A').lower()
-        current_time = now_local.time()
-        matched_plugins: Set[str] = set()
-
-        for idx, window in enumerate(windows):
-            if not isinstance(window, dict):
-                continue
-
-            raw_days = window.get('days', [])
-            days = []
-            if isinstance(raw_days, list):
-                for day in raw_days:
-                    day_name = str(day).strip().lower()
-                    if day_name:
-                        days.append(day_name)
-            if days and current_day not in days:
-                continue
-
-            start_time_str = str(window.get('start_time', '')).strip()
-            end_time_str = str(window.get('end_time', '')).strip()
-            if not start_time_str or not end_time_str:
-                continue
-
-            try:
-                start_time = datetime.strptime(start_time_str, '%H:%M').time()
-                end_time = datetime.strptime(end_time_str, '%H:%M').time()
-            except ValueError:
-                logger.warning(
-                    "Invalid plugin schedule window time format at index %d (%s - %s)",
-                    idx, start_time_str, end_time_str
-                )
-                continue
-
-            if not self._time_in_window(current_time, start_time, end_time):
-                continue
-
-            raw_plugins = window.get('plugins', [])
-            plugin_ids = raw_plugins if isinstance(raw_plugins, list) else []
-            for plugin_id in plugin_ids:
-                pid = str(plugin_id).strip()
-                if pid and pid in enabled_plugins:
-                    matched_plugins.add(pid)
-
-        if matched_plugins:
-            return matched_plugins
-
-        return set() if fallback == 'none' else set(enabled_plugins)
-
-    def _refresh_available_modes_from_plugin_schedule(self) -> None:
-        """Apply plugin-schedule filtering to current rotation mode list."""
-        # Keep all modes if no plugin schedule filter is active.
-        scheduled_plugins = self._get_plugin_schedule_filter()
-        if scheduled_plugins is None:
-            new_modes = list(self._all_available_modes)
-        else:
-            new_modes = [
-                mode for mode in self._all_available_modes
-                if self.mode_to_plugin_id.get(mode) in scheduled_plugins
-            ]
-
-        unchanged_modes = new_modes == self.available_modes
-        unchanged_filter = (
-            (self._scheduled_plugin_ids is None and scheduled_plugins is None)
-            or (self._scheduled_plugin_ids is not None and scheduled_plugins is not None and self._scheduled_plugin_ids == scheduled_plugins)
-        )
-        if unchanged_modes and unchanged_filter:
-            return
-
-        self._scheduled_plugin_ids = None if scheduled_plugins is None else set(scheduled_plugins)
-        previous_mode = self.current_display_mode
-        self.available_modes = new_modes
-
-        if not self.available_modes:
-            if previous_mode:
-                logger.info("Plugin time schedule produced no active modes for current window")
-            self.current_mode_index = 0
-            self.current_display_mode = None
-            return
-
-        if previous_mode in self.available_modes:
-            self.current_mode_index = self.available_modes.index(previous_mode)
-            self.current_display_mode = previous_mode
-            return
-
-        if self.current_mode_index >= len(self.available_modes):
-            self.current_mode_index = 0
-        self.current_display_mode = self.available_modes[self.current_mode_index]
-        self.force_change = True
-        logger.info(
-            "Active mode list changed by plugin schedule. New mode count: %d, current mode: %s",
-            len(self.available_modes), self.current_display_mode
-        )
-
     def _update_modules(self):
         """Update all plugin modules."""
         if not self.plugin_manager:
@@ -823,9 +670,7 @@ class DisplayController:
 
         if hasattr(self.plugin_manager, "run_scheduled_updates"):
             try:
-                self.plugin_manager.run_scheduled_updates(
-                    allowed_plugin_ids=self._scheduled_plugin_ids
-                )
+                self.plugin_manager.run_scheduled_updates()
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Error running scheduled plugin updates")
 
@@ -1383,10 +1228,7 @@ class DisplayController:
         Check all plugins for live priority content.
         Returns the mode that should be displayed if live content is found, None otherwise.
         """
-        for mode_name in self.available_modes:
-            plugin_instance = self.plugin_modes.get(mode_name)
-            if not plugin_instance:
-                continue
+        for mode_name, plugin_instance in self.plugin_modes.items():
             if hasattr(plugin_instance, 'has_live_priority') and hasattr(plugin_instance, 'has_live_content'):
                 try:
                     if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
@@ -1408,7 +1250,7 @@ class DisplayController:
 
     def run(self):
         """Run the display controller, switching between displays."""
-        if not self._all_available_modes:
+        if not self.available_modes:
             logger.warning("No display modes are enabled. Exiting.")
             self.display_manager.cleanup()
             return
@@ -1416,7 +1258,6 @@ class DisplayController:
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
-            self._refresh_available_modes_from_plugin_schedule()
             self.current_display_mode = self.available_modes[self.current_mode_index] if self.available_modes else 'none'
             logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
             
@@ -1424,8 +1265,6 @@ class DisplayController:
                 # Handle on-demand commands before rendering
                 self._poll_on_demand_requests()
                 self._check_on_demand_expiration()
-                # Refresh scheduled mode set before plugin update tick so updates can be filtered
-                self._refresh_available_modes_from_plugin_schedule()
                 self._tick_plugin_updates()
                 
                 # Clean up expired WiFi status messages
@@ -1444,18 +1283,6 @@ class DisplayController:
                     self.is_display_active = True
                 elif not self.on_demand_active and self.on_demand_schedule_override:
                     self.on_demand_schedule_override = False
-
-                # If schedule allows display but no plugins are active in current plugin window,
-                # keep panel blank until a matching window starts.
-                if self.is_display_active and not self.on_demand_active and not self.available_modes:
-                    try:
-                        self.display_manager.clear()
-                        self.display_manager.update_display()
-                    except Exception as e:
-                        logger.debug(f"Error clearing display with no active scheduled modes: {e}")
-                    logger.info("Display active but no plugins scheduled for current window, waiting...")
-                    self._sleep_with_plugin_updates(30)
-                    continue
 
                 # Check dim schedule and apply brightness (only when display is active)
                 if self.is_display_active:

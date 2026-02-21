@@ -255,105 +255,6 @@ def _validate_time_range(start_time_str, end_time_str, allow_overnight=True):
     except (ValueError, TypeError) as e:
         return False, f"Invalid time format: {str(e)}"
 
-
-SCHEDULE_DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-
-
-def _normalize_list_field(value):
-    """
-    Normalize list-like fields from JSON payloads.
-
-    Supports:
-    - Python list
-    - JSON string list (e.g. '["a","b"]')
-    - Comma-separated string (e.g. 'a,b')
-    """
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return []
-        if text.startswith('[') and text.endswith(']'):
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, list):
-                    return parsed
-            except Exception:
-                pass
-        return [part.strip() for part in text.split(',') if part.strip()]
-    return []
-
-
-def _normalize_plugin_schedule(data):
-    """
-    Validate and normalize plugin schedule configuration payload.
-
-    Returns:
-        tuple[dict, Optional[str]]: (normalized_config, error_message)
-    """
-    enabled = _coerce_to_bool(data.get('plugin_schedule_enabled'))
-    fallback = str(data.get('plugin_schedule_fallback', 'all_enabled')).strip().lower() or 'all_enabled'
-    if fallback not in {'all_enabled', 'none'}:
-        return {}, "plugin_schedule_fallback must be either 'all_enabled' or 'none'"
-
-    windows_raw = data.get('plugin_schedule_windows', [])
-    windows = _normalize_list_field(windows_raw)
-    if windows_raw and not isinstance(windows, list):
-        return {}, "plugin_schedule_windows must be a list"
-
-    normalized_windows = []
-    for idx, window in enumerate(windows):
-        if not isinstance(window, dict):
-            return {}, f"Window #{idx + 1} must be an object"
-
-        start_time = str(window.get('start_time', '')).strip()
-        end_time = str(window.get('end_time', '')).strip()
-        if not start_time or not end_time:
-            return {}, f"Window #{idx + 1} must include start_time and end_time"
-
-        is_valid, error_msg = _validate_time_format(start_time)
-        if not is_valid:
-            return {}, f"Window #{idx + 1} invalid start_time: {error_msg}"
-
-        is_valid, error_msg = _validate_time_format(end_time)
-        if not is_valid:
-            return {}, f"Window #{idx + 1} invalid end_time: {error_msg}"
-
-        plugins = []
-        for plugin_id in _normalize_list_field(window.get('plugins', [])):
-            plugin_str = str(plugin_id).strip()
-            if plugin_str and plugin_str not in plugins:
-                plugins.append(plugin_str)
-        if not plugins:
-            return {}, f"Window #{idx + 1} must include at least one plugin"
-
-        raw_days = _normalize_list_field(window.get('days', SCHEDULE_DAYS))
-        days = []
-        for day in raw_days:
-            day_name = str(day).strip().lower()
-            if day_name in SCHEDULE_DAYS and day_name not in days:
-                days.append(day_name)
-        if not days:
-            days = list(SCHEDULE_DAYS)
-
-        normalized_window = {
-            'name': str(window.get('name', '')).strip(),
-            'start_time': start_time,
-            'end_time': end_time,
-            'days': days,
-            'plugins': plugins
-        }
-        normalized_windows.append(normalized_window)
-
-    return {
-        'enabled': enabled,
-        'fallback': fallback,
-        'windows': normalized_windows
-    }, None
-
 @api_v3.route('/config/schedule', methods=['POST'])
 def save_schedule_config():
     """Save schedule configuration"""
@@ -411,9 +312,10 @@ def save_schedule_config():
             # Remove global times when switching to per-day mode
             schedule_config.pop('start_time', None)
             schedule_config.pop('end_time', None)
+            days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
             enabled_days_count = 0
 
-            for day in SCHEDULE_DAYS:
+            for day in days:
                 day_config = {}
                 enabled_key = f'{day}_enabled'
                 start_key = f'{day}_start'
@@ -476,15 +378,6 @@ def save_schedule_config():
                     "At least one day must be enabled in per-day schedule mode",
                     status_code=400
                 )
-
-        plugin_schedule, plugin_schedule_error = _normalize_plugin_schedule(data)
-        if plugin_schedule_error:
-            return error_response(
-                ErrorCode.VALIDATION_ERROR,
-                plugin_schedule_error,
-                status_code=400
-            )
-        schedule_config['plugin_schedule'] = plugin_schedule
 
         # Update and save config using atomic save
         current_config['schedule'] = schedule_config

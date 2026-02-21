@@ -141,41 +141,11 @@ def _load_schedule_partial():
             main_config = pages_v3.config_manager.load_config()
             schedule_config = main_config.get('schedule', {})
             dim_schedule_config = main_config.get('dim_schedule', {})
-            plugin_options = []
-
-            if pages_v3.plugin_manager:
-                try:
-                    all_plugin_info = pages_v3.plugin_manager.get_all_plugin_info()
-                    for info in all_plugin_info:
-                        plugin_id = info.get('id')
-                        if not plugin_id:
-                            continue
-                        plugin_name = info.get('name') or plugin_id
-                        plugin_options.append({'id': plugin_id, 'name': plugin_name})
-                except Exception:
-                    plugin_options = []
-
-            if not plugin_options:
-                # Fallback: infer plugin IDs from config keys
-                reserved_keys = {
-                    'web_display_autostart', 'schedule', 'dim_schedule', 'timezone', 'location',
-                    'display', 'plugin_system', 'weather', 'stocks'
-                }
-                for key, value in main_config.items():
-                    if key in reserved_keys or not isinstance(value, dict):
-                        continue
-                    plugin_options.append({'id': key, 'name': key})
-
-            plugin_options = sorted(
-                plugin_options,
-                key=lambda item: (str(item.get('name', '')).lower(), str(item.get('id', '')).lower())
-            )
             # Get normal brightness for display in dim schedule UI
             normal_brightness = main_config.get('display', {}).get('hardware', {}).get('brightness', 90)
             return render_template('v3/partials/schedule.html',
                                  schedule_config=schedule_config,
                                  dim_schedule_config=dim_schedule_config,
-                                 plugin_options=plugin_options,
                                  normal_brightness=normal_brightness)
     except Exception as e:
         return f"Error: {str(e)}", 500

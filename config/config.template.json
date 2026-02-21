@@ -41,11 +41,6 @@
                 "start_time": "07:00",
                 "end_time": "23:00"
             }
-        },
-        "plugin_schedule": {
-            "enabled": false,
-            "fallback": "all_enabled",
-            "windows": []
         }
     },
     "dim_schedule": {

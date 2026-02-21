@@ -14,7 +14,7 @@ Supports three display modes:
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING, Callable, Set
+from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -65,8 +65,7 @@ class StreamManager:
         self,
         config: VegasModeConfig,
         plugin_manager: 'PluginManager',
-        plugin_adapter: PluginAdapter,
-        plugin_filter_getter: Optional[Callable[[], Optional[Set[str]]]] = None
+        plugin_adapter: PluginAdapter
     ):
         """
         Initialize the stream manager.
@@ -79,7 +78,6 @@ class StreamManager:
         self.config = config
         self.plugin_manager = plugin_manager
         self.plugin_adapter = plugin_adapter
-        self.plugin_filter_getter = plugin_filter_getter
 
         # Content queue (double-buffered)
         self._active_buffer: Deque[ContentSegment] = deque()
@@ -334,14 +332,6 @@ class StreamManager:
             )
 
         # Apply ordering from config (outside lock for potentially slow operation)
-        if self.plugin_filter_getter:
-            try:
-                allowed_plugins = self.plugin_filter_getter()
-                if allowed_plugins is not None:
-                    available_plugins = [pid for pid in available_plugins if pid in allowed_plugins]
-            except Exception:
-                logger.exception("Failed to apply Vegas plugin schedule filter")
-
         ordered_plugins = self.config.get_ordered_plugins(available_plugins)
         logger.info(
             "Vegas scroll plugin list: %d available -> %d ordered",
