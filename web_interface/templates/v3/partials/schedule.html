@@ -15,6 +15,49 @@
         <!-- Schedule Picker Widget Container -->
         <div id="schedule_picker_container"></div>
 
+        <!-- Plugin Time Window Scheduling -->
+        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-900">Plugin Time Windows</h3>
+                    <p class="mt-1 text-xs text-gray-600">
+                        Optionally choose which plugins run during specific time windows. Display on/off scheduling above still controls power visibility.
+                    </p>
+                </div>
+                <label class="inline-flex items-center cursor-pointer mt-1">
+                    <input type="checkbox" id="plugin_schedule_enabled_ui" class="sr-only peer">
+                    <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:bg-blue-600">
+                        <div class="absolute top-[2px] left-[2px] bg-white border border-gray-300 rounded-full h-5 w-5 transition-all peer-checked:translate-x-full"></div>
+                    </div>
+                    <span class="ml-3 text-sm text-gray-700">Enable</span>
+                </label>
+            </div>
+
+            <div id="plugin_schedule_editor" class="mt-4 space-y-4">
+                <div>
+                    <label for="plugin_schedule_fallback_ui" class="block text-xs font-medium text-gray-700 mb-1">Outside Window Behavior</label>
+                    <select id="plugin_schedule_fallback_ui" class="w-full max-w-sm text-sm border border-gray-300 rounded-md px-3 py-2">
+                        <option value="all_enabled">Run all enabled plugins</option>
+                        <option value="none">Run no plugins</option>
+                    </select>
+                </div>
+
+                <div id="plugin_schedule_windows_container" class="space-y-3"></div>
+
+                <button type="button"
+                        id="add_plugin_window_btn"
+                        class="btn bg-gray-700 hover:bg-gray-800 text-white px-3 py-2 rounded-md text-sm">
+                    <i class="fas fa-plus mr-2"></i>
+                    Add Time Window
+                </button>
+            </div>
+
+            <!-- Hidden fields serialized before submit -->
+            <input type="hidden" id="plugin_schedule_enabled_hidden" name="plugin_schedule_enabled" value="false">
+            <input type="hidden" id="plugin_schedule_fallback_hidden" name="plugin_schedule_fallback" value="all_enabled">
+            <input type="hidden" id="plugin_schedule_windows_hidden" name="plugin_schedule_windows" value="[]">
+        </div>
+
         <!-- Submit Button -->
         <div class="flex justify-end">
             <button type="submit"
@@ -193,6 +236,257 @@
     } else {
         // Small delay to ensure widget scripts are loaded
         setTimeout(initSchedulePicker, 50);
+    }
+})();
+
+// Plugin time-window scheduling editor
+(function() {
+    'use strict';
+
+    const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const DAY_LABELS = {
+        monday: 'Mon',
+        tuesday: 'Tue',
+        wednesday: 'Wed',
+        thursday: 'Thu',
+        friday: 'Fri',
+        saturday: 'Sat',
+        sunday: 'Sun'
+    };
+
+    const pluginOptions = {{ plugin_options | tojson | safe }} || [];
+    const scheduleConfig = {{ schedule_config | tojson | safe }} || {};
+
+    const pluginOptionMap = new Map();
+    pluginOptions.forEach(function(option) {
+        const pluginId = String(option.id || '').trim();
+        if (!pluginId) return;
+        pluginOptionMap.set(pluginId, String(option.name || pluginId));
+    });
+    const configuredWindows = ((scheduleConfig.plugin_schedule || {}).windows || []);
+    configuredWindows.forEach(function(windowItem) {
+        const plugins = Array.isArray(windowItem && windowItem.plugins) ? windowItem.plugins : [];
+        plugins.forEach(function(pluginIdRaw) {
+            const pluginId = String(pluginIdRaw || '').trim();
+            if (!pluginId || pluginOptionMap.has(pluginId)) return;
+            pluginOptionMap.set(pluginId, pluginId);
+            pluginOptions.push({ id: pluginId, name: pluginId });
+        });
+    });
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function normalizePluginSchedule(raw) {
+        const input = raw && typeof raw === 'object' ? raw : {};
+        const windows = Array.isArray(input.windows) ? input.windows : [];
+        return {
+            enabled: !!input.enabled,
+            fallback: (input.fallback === 'none') ? 'none' : 'all_enabled',
+            windows: windows.map(function(windowItem) {
+                const item = windowItem && typeof windowItem === 'object' ? windowItem : {};
+                const plugins = Array.isArray(item.plugins)
+                    ? item.plugins.map(String).filter(Boolean)
+                    : [];
+                const days = Array.isArray(item.days)
+                    ? item.days.map(function(day) { return String(day).toLowerCase(); }).filter(function(day) { return DAYS.includes(day); })
+                    : DAYS.slice();
+                return {
+                    name: String(item.name || ''),
+                    start_time: String(item.start_time || '07:00'),
+                    end_time: String(item.end_time || '12:00'),
+                    plugins: plugins,
+                    days: days.length ? days : DAYS.slice()
+                };
+            })
+        };
+    }
+
+    function createDefaultWindow() {
+        return {
+            name: '',
+            start_time: '07:00',
+            end_time: '12:00',
+            plugins: [],
+            days: DAYS.slice()
+        };
+    }
+
+    function renderWindowRow(windowData, index) {
+        const selectedPlugins = new Set(windowData.plugins || []);
+        const selectedDays = new Set(windowData.days || DAYS);
+        const pluginOptionsHtml = pluginOptions.map(function(option) {
+            const pluginId = String(option.id || '');
+            const pluginName = String(option.name || pluginId);
+            const selectedAttr = selectedPlugins.has(pluginId) ? ' selected' : '';
+            return '<option value="' + escapeHtml(pluginId) + '"' + selectedAttr + '>' + escapeHtml(pluginName) + '</option>';
+        }).join('');
+
+        const daysHtml = DAYS.map(function(day) {
+            const checked = selectedDays.has(day) ? ' checked' : '';
+            return (
+                '<label class="inline-flex items-center mr-3 mb-2 text-xs text-gray-700">' +
+                    '<input type="checkbox" class="plugin-window-day mr-1 rounded border-gray-300" value="' + day + '"' + checked + '>' +
+                    DAY_LABELS[day] +
+                '</label>'
+            );
+        }).join('');
+
+        return (
+            '<div class="plugin-window-row bg-white border border-gray-300 rounded-md p-3" data-index="' + index + '">' +
+                '<div class="flex items-center justify-between gap-3 mb-3">' +
+                    '<div class="flex-1">' +
+                        '<label class="block text-xs font-medium text-gray-700 mb-1">Window Label (optional)</label>' +
+                        '<input type="text" class="plugin-window-name w-full text-sm border border-gray-300 rounded px-2 py-1" value="' + escapeHtml(windowData.name) + '" placeholder="Morning / Sports block">' +
+                    '</div>' +
+                    '<button type="button" class="remove-plugin-window btn bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs mt-5">' +
+                        '<i class="fas fa-trash mr-1"></i>Remove' +
+                    '</button>' +
+                '</div>' +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">' +
+                    '<div>' +
+                        '<label class="block text-xs font-medium text-gray-700 mb-1">Start Time</label>' +
+                        '<input type="time" class="plugin-window-start w-full text-sm border border-gray-300 rounded px-2 py-1" value="' + escapeHtml(windowData.start_time) + '">' +
+                    '</div>' +
+                    '<div>' +
+                        '<label class="block text-xs font-medium text-gray-700 mb-1">End Time</label>' +
+                        '<input type="time" class="plugin-window-end w-full text-sm border border-gray-300 rounded px-2 py-1" value="' + escapeHtml(windowData.end_time) + '">' +
+                    '</div>' +
+                '</div>' +
+                '<div class="mb-3">' +
+                    '<label class="block text-xs font-medium text-gray-700 mb-1">Days</label>' +
+                    '<div>' + daysHtml + '</div>' +
+                '</div>' +
+                '<div>' +
+                    '<label class="block text-xs font-medium text-gray-700 mb-1">Plugins in this window</label>' +
+                    '<select multiple class="plugin-window-plugins w-full text-sm border border-gray-300 rounded px-2 py-1 h-28">' +
+                        pluginOptionsHtml +
+                    '</select>' +
+                    '<p class="mt-1 text-xs text-gray-500">Tip: hold Ctrl/Cmd to select multiple plugins.</p>' +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function collectWindowsFromDom(container) {
+        const rows = Array.from(container.querySelectorAll('.plugin-window-row'));
+        return rows.map(function(row) {
+            const name = (row.querySelector('.plugin-window-name') || {}).value || '';
+            const startTime = (row.querySelector('.plugin-window-start') || {}).value || '07:00';
+            const endTime = (row.querySelector('.plugin-window-end') || {}).value || '12:00';
+            const days = Array.from(row.querySelectorAll('.plugin-window-day:checked')).map(function(cb) { return cb.value; });
+            const pluginsSelect = row.querySelector('.plugin-window-plugins');
+            const plugins = pluginsSelect
+                ? Array.from(pluginsSelect.selectedOptions).map(function(opt) { return opt.value; }).filter(Boolean)
+                : [];
+            return {
+                name: String(name).trim(),
+                start_time: startTime,
+                end_time: endTime,
+                days: days.length ? days : DAYS.slice(),
+                plugins: plugins
+            };
+        });
+    }
+
+    function setEditorEnabled(enabled) {
+        const editor = document.getElementById('plugin_schedule_editor');
+        if (!editor) return;
+        editor.classList.toggle('opacity-60', !enabled);
+        editor.classList.toggle('pointer-events-none', !enabled);
+    }
+
+    function initPluginScheduleEditor() {
+        const form = document.getElementById('schedule_form');
+        const enabledToggle = document.getElementById('plugin_schedule_enabled_ui');
+        const fallbackSelect = document.getElementById('plugin_schedule_fallback_ui');
+        const windowsContainer = document.getElementById('plugin_schedule_windows_container');
+        const addBtn = document.getElementById('add_plugin_window_btn');
+        const enabledHidden = document.getElementById('plugin_schedule_enabled_hidden');
+        const fallbackHidden = document.getElementById('plugin_schedule_fallback_hidden');
+        const windowsHidden = document.getElementById('plugin_schedule_windows_hidden');
+
+        if (!form || !enabledToggle || !fallbackSelect || !windowsContainer || !addBtn || !enabledHidden || !fallbackHidden || !windowsHidden) {
+            return;
+        }
+
+        const pluginSchedule = normalizePluginSchedule(scheduleConfig.plugin_schedule || {});
+        let windowsData = pluginSchedule.windows.length ? pluginSchedule.windows : [];
+        enabledToggle.checked = !!pluginSchedule.enabled;
+        fallbackSelect.value = pluginSchedule.fallback || 'all_enabled';
+
+        function renderWindows() {
+            windowsContainer.innerHTML = '';
+            if (!windowsData.length) {
+                windowsContainer.innerHTML = '<div class="text-xs text-gray-500 italic">No plugin windows configured.</div>';
+                return;
+            }
+            windowsData.forEach(function(windowData, idx) {
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = renderWindowRow(windowData, idx);
+                windowsContainer.appendChild(wrapper.firstChild);
+            });
+        }
+
+        function syncHiddenFields() {
+            const normalizedWindows = collectWindowsFromDom(windowsContainer).filter(function(windowData) {
+                return Array.isArray(windowData.plugins) && windowData.plugins.length > 0;
+            });
+            enabledHidden.value = enabledToggle.checked ? 'true' : 'false';
+            fallbackHidden.value = fallbackSelect.value || 'all_enabled';
+            windowsHidden.value = JSON.stringify(normalizedWindows);
+            windowsData = normalizedWindows;
+        }
+
+        renderWindows();
+        setEditorEnabled(enabledToggle.checked);
+        syncHiddenFields();
+
+        enabledToggle.addEventListener('change', function() {
+            setEditorEnabled(enabledToggle.checked);
+            syncHiddenFields();
+        });
+
+        fallbackSelect.addEventListener('change', syncHiddenFields);
+
+        addBtn.addEventListener('click', function() {
+            windowsData = collectWindowsFromDom(windowsContainer);
+            windowsData.push(createDefaultWindow());
+            renderWindows();
+            syncHiddenFields();
+        });
+
+        windowsContainer.addEventListener('click', function(event) {
+            const button = event.target.closest('.remove-plugin-window');
+            if (!button) return;
+            const row = event.target.closest('.plugin-window-row');
+            const index = row ? Number(row.getAttribute('data-index')) : -1;
+            if (index < 0) return;
+            windowsData = collectWindowsFromDom(windowsContainer);
+            windowsData.splice(index, 1);
+            renderWindows();
+            syncHiddenFields();
+        });
+
+        windowsContainer.addEventListener('change', function() {
+            syncHiddenFields();
+        });
+
+        form.addEventListener('submit', function() {
+            syncHiddenFields();
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPluginScheduleEditor);
+    } else {
+        setTimeout(initPluginScheduleEditor, 75);
     }
 })();
 
