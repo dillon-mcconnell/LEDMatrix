@@ -254,11 +254,12 @@
         sunday: 'Sun'
     };
 
-    const pluginOptions = {{ plugin_options | tojson | safe }} || [];
-    const scheduleConfig = {{ schedule_config | tojson | safe }} || {};
+    const pluginOptions = {{ (plugin_options | default([], true)) | tojson | safe }} || [];
+    const scheduleConfig = {{ (schedule_config | default({}, true)) | tojson | safe }} || {};
 
+    const normalizedPluginOptions = Array.isArray(pluginOptions) ? pluginOptions : [];
     const pluginOptionMap = new Map();
-    pluginOptions.forEach(function(option) {
+    normalizedPluginOptions.forEach(function(option) {
         const pluginId = String(option.id || '').trim();
         if (!pluginId) return;
         pluginOptionMap.set(pluginId, String(option.name || pluginId));
@@ -270,7 +271,7 @@
             const pluginId = String(pluginIdRaw || '').trim();
             if (!pluginId || pluginOptionMap.has(pluginId)) return;
             pluginOptionMap.set(pluginId, pluginId);
-            pluginOptions.push({ id: pluginId, name: pluginId });
+            normalizedPluginOptions.push({ id: pluginId, name: pluginId });
         });
     });
 
@@ -321,7 +322,7 @@
     function renderWindowRow(windowData, index) {
         const selectedPlugins = new Set(windowData.plugins || []);
         const selectedDays = new Set(windowData.days || DAYS);
-        const pluginOptionsHtml = pluginOptions.map(function(option) {
+        const pluginOptionsHtml = normalizedPluginOptions.map(function(option) {
             const pluginId = String(option.id || '');
             const pluginName = String(option.name || pluginId);
             const selectedAttr = selectedPlugins.has(pluginId) ? ' selected' : '';

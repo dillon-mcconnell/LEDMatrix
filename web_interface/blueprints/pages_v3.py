@@ -150,7 +150,11 @@ def _load_schedule_partial():
                         plugin_id = info.get('id')
                         if not plugin_id:
                             continue
+                        plugin_id = str(plugin_id).strip()
+                        if not plugin_id:
+                            continue
                         plugin_name = info.get('name') or plugin_id
+                        plugin_name = str(plugin_name).strip() or plugin_id
                         plugin_options.append({'id': plugin_id, 'name': plugin_name})
                 except Exception:
                     plugin_options = []
@@ -164,7 +168,10 @@ def _load_schedule_partial():
                 for key, value in main_config.items():
                     if key in reserved_keys or not isinstance(value, dict):
                         continue
-                    plugin_options.append({'id': key, 'name': key})
+                    key_str = str(key).strip()
+                    if not key_str:
+                        continue
+                    plugin_options.append({'id': key_str, 'name': key_str})
 
             plugin_options = sorted(
                 plugin_options,
